@@ -15,7 +15,10 @@ output:
 
 ### Introdução
 
-O conjunto de códigos abaixo replica o Capítulo 8, intitulado **"Pareamento"**, do livro *Avaliação de Impacto na Prática*, segunda edição, de Paul J. Gertler, Sebastián Martínez, Patrick Premand, Laura B. Rawlings e Christel M. J. Vermeersch. Este capítulo trata da avaliação de impacto utilizando métodos de pareamento, em especial o **Propensity Score Matching (PSM)**. Essa técnica busca comparar beneficiários de um programa com não beneficiários que possuem características observáveis semelhantes, reduzindo o viés de seleção. A replicação foi realizada em **R**, utilizando os pacotes `MatchIt` e `estimatr` para estimar os escores de propensão, realizar o pareamento e aplicar regressões robustas, permitindo reproduzir os resultados apresentados no livro [*Avaliação de Impacto na Prática*](https://publications.iadb.org/pt/avaliacao-de-impacto-na-pratica-segunda-edicao).
+O conjunto de códigos abaixo replica o Capítulo 8, intitulado **"Pareamento"**, do livro 
+*Avaliação de Impacto na Prática*, segunda edição, de Paul J. Gertler, Sebastián Martínez, 
+Patrick Premand, Laura B. Rawlings e Christel M. J. Vermeersch. Este capítulo trata da 
+avaliação de impacto utilizando métodos de pareamento, em especial o **Propensity Score Matching (PSM)**. Essa técnica busca comparar beneficiários de um programa com não beneficiários que possuem características observáveis semelhantes, reduzindo o viés de seleção. A replicação foi realizada em **R**, utilizando os pacotes `MatchIt` e `estimatr` para estimar os escores de propensão, realizar o pareamento e aplicar regressões robustas, permitindo reproduzir os resultados apresentados no livro [*Avaliação de Impacto na Prática*](https://publications.iadb.org/pt/avaliacao-de-impacto-na-pratica-segunda-edicao).
 
 O código utilizado segue de perto aquele disponível em *Impact Evaluation in Practice Solutions for Second Edition in R*, desenvolvido pelo professor **Liam F. Beiser-McGrath**, com pequenas adaptações. Esse material pode ser acessado no site [*Impact Evaluation in Practice Solutions for Second Edition in R*](https://lfbeisermcgrath.github.io/rimpactevaluation/).
 
