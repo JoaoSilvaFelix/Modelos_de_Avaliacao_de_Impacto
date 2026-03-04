@@ -1,0 +1,309 @@
+---
+title: "Pareamento"
+author: "João Felix"
+date: "24-09-2025"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_title: Sumário
+    number_sections: true
+---
+
+### Introdução
+
+O conjunto de códigos abaixo replica o Capítulo 8, intitulado **"Pareamento"**, do livro *Avaliação de Impacto na Prática*, segunda edição, de Paul J. Gertler, Sebastián Martínez, Patrick Premand, Laura B. Rawlings e Christel M. J. Vermeersch. Este capítulo trata da avaliação de impacto utilizando métodos de pareamento, em especial o **Propensity Score Matching (PSM)**. Essa técnica busca comparar beneficiários de um programa com não beneficiários que possuem características observáveis semelhantes, reduzindo o viés de seleção. A replicação foi realizada em **R**, utilizando os pacotes `MatchIt` e `estimatr` para estimar os escores de propensão, realizar o pareamento e aplicar regressões robustas, permitindo reproduzir os resultados apresentados no livro [*Avaliação de Impacto na Prática*](https://publications.iadb.org/pt/avaliacao-de-impacto-na-pratica-segunda-edicao).
+
+O código utilizado segue de perto aquele disponível em *Impact Evaluation in Practice Solutions for Second Edition in R*, desenvolvido pelo professor **Liam F. Beiser-McGrath**, com pequenas adaptações. Esse material pode ser acessado no site [*Impact Evaluation in Practice Solutions for Second Edition in R*](https://lfbeisermcgrath.github.io/rimpactevaluation/).
+
+.
+
+### Bibliotecas
+
+```{r importar-bibliotecas, message=FALSE, warning=FALSE}
+# Importação
+library(haven) # Stata
+
+# Manipulação
+library(dplyr) 
+library(tidyr) 
+
+# Pareamento
+library(MatchIt) # PSM
+
+# Regressões
+library(estimatr) 
+
+# Visualização e tabelas
+library(ggplot2)
+library(kableExtra) 
+
+```
+
+### Importando e manipulando os dados
+
+```{r importar-dados, message=FALSE, warning=FALSE}
+# Importand os dados
+dados <- read_dta('dados/evaluation.dta')
+# head(dados, 5)
+```
+
+Colocando os dados em formato wide. Cada domicílio ocupa várias linhas, com variáveis medidas antes e depois da inscrição. Para fazer o pareamento, cada linha deve representar um domicílio único, criando colunas separadas para as características de cada período.
+
+```{r formato-wide, message=FALSE, warning=FALSE}
+dados_wide <- dados %>%
+  pivot_wider(
+    names_from = round,
+    values_from = c(
+      health_expenditures, poverty_index, age_hh, age_sp,
+      educ_hh, educ_sp, female_hh, indigenous, hhsize,
+      dirtfloor, bathroom, land, hospital_distance, hospital
+    )
+  ) %>%
+  filter(!is.na(health_expenditures_0))
+```
+
+### Escore de propensão nos dois cenários
+
+No primeiro cenário o pareamento, por meio de propensity score, será feito utilizando um conjunto maior de variáveis para prever a inscrição no programa, incluindo atributos socioeconômicos das famílias. No segundo cenário, há pouca informação para prever a inscrição (apenas o nível educacional e a idade do chefe de família)
+
+Quando se fala em estimar o escore de propensão, na verdade está se referindo ao cálculo da probabilidade de cada unidade (como um domicílio ou indivíduo) receber o tratamento com base em suas características observáveis. Esse cálculo combina várias covariáveis em um único valor, chamado escore de propensão, que reflete quão semelhante cada unidade é às outras em termos de probabilidade de tratamento. Com esse escore, podemos parear unidades tratadas e não tratadas com probabilidades semelhantes, permitindo comparações mais justas e reduzindo vieses causados por diferenças nas características iniciais. Os dois blocos de código abaixo fazen isso para os dois cenários citados.
+
+#### Escore de propensão com menor número de variáveis
+
+Abaixo estima-se a probabilidade de cada família se inscrever no programa (o escore de propensão) com um menor número de atributos.
+
+```{r propensity-score-limitado, message=FALSE, warning=FALSE}
+set.seed(100)  # define a semente aleatória
+
+# Estimando o score de propensão com o conjunto limitado de variáveis
+psm_r <- matchit(
+  enrolled ~ age_hh_0 + educ_hh_0,
+  data = dados_wide %>% dplyr::select(-hospital_0, -hospital_1),
+  distance = "glm",
+  link = "probit"
+)
+```
+
+Os valores abaixo indicam que, quanto maior a idade e a educação do chefe da família na linha de base, menor é a probabilidade de participar do programa. O que o modelo probit mostra é apenas a direção do efeito. Todas as variáveis são significativas estatisticamente.
+
+```{r tabela-psm-limitado, message=FALSE, warning=FALSE}
+# Coeficientes do modelo limitado
+coef_r <- summary(psm_r$model)$coefficients
+print(coef_r, digits = 2)
+```
+
+#### Escore de propensão com mais variáveis
+
+Abaixo, estima-se a probabilidade de cada família se inscrever no programa (o escore de propensão) com um maior número de variáveis.
+
+```{r propensity-score, message=FALSE, warning=FALSE}
+set.seed(100)
+
+# Estimando o score de propensão com o conjunto maior de variáveis
+psm_ur <- matchit(
+  enrolled ~ age_hh_0 + educ_hh_0 + age_sp_0 + educ_sp_0 +
+             female_hh_0 + indigenous_0 + hhsize_0 + dirtfloor_0 +
+             bathroom_0 + land_0 + hospital_distance_0,
+  data = dados_wide %>% dplyr::select(-hospital_0, -hospital_1), 
+  distance = "glm",
+  link = "probit"
+)
+```
+
+A probabilidade de uma família se inscrever no programa diminui quando seus membros são mais velhos, possuem maior nível de instrução, a família é chefiada por uma mulher, a residência possui banheiro ou a propriedade possui maiores áreas de terra. Por outro lado, a probabilidade aumenta se a família for indígena, tiver mais integrantes, residir em uma casa com piso de terra ou estiver situada longe de um hospital.
+
+```{r tabela-psm-total, message=FALSE, warning=FALSE}
+# Coeficientes do modelo completo
+coef_ur <- summary(psm_ur$model)$coefficients
+print(coef_ur, digits = 2)
+```
+
+Assim, de modo geral, parece que as famílias mais pobres e com menor escolaridade têm maior tendência a se inscrever, o que é positivo para um programa voltado ao público de baixa renda.
+
+#### Suporte comum
+
+O gráfico mostra as distribuições do escore de propensão para famílias inscritas (linha preta sólida) e não inscritas (linha vermelha tracejada). A linha preta representa as famílias que participaram do programa, enquanto a vermelha indica as famílias que não participaram.
+
+```{r plote-suporte-comum, message=FALSE, warning=FALSE}
+
+# Adiciona a coluna do escore de propensão
+dados_wide <- dados_wide %>%
+  mutate(ps_ur = psm_ur$model$fitted.values,
+         enrolled_lab = ifelse(enrolled == 1, "Inscrito", "Nao inscrito"))
+
+# Plot simples com linha tracejada para não inscrito
+ggplot(dados_wide, aes(x = ps_ur, color = enrolled_lab, linetype = enrolled_lab)) +
+  geom_density(size = 1) +
+  xlab("Escore de Propensao") +
+  ylab("Densidade") +
+  scale_color_manual(values = c("Nao inscrito" = "red", "Inscrito" = "black")) +
+  scale_linetype_manual(values = c("Nao inscrito" = "dashed", "Inscrito" = "solid")) +
+  theme_minimal() +
+  theme(legend.position = "top",
+        legend.title = element_blank())
+
+
+
+```
+
+A área onde as duas linhas se sobrepõem corresponde ao suporte comum, ou seja, o intervalo de escores em que existem famílias tanto tratadas quanto de controle com probabilidades semelhantes de participação. Essa sobreposição é essencial, pois indica que é possível comparar famílias dos dois grupos de forma justa, reduzindo vieses.
+
+Diferenças entre as linhas fora da sobreposição mostram regiões onde as probabilidades de inscrição diferem muito entre os grupos, ou seja, onde não há famílias comparáveis. Quanto maior a sobreposição, mais confiável é a análise do efeito do programa, pois existem unidades tratadas e de controle similares para o pareamento.
+
+Abaixo, temos como se comportam as variáveis antes do paraeamento.
+
+```{r balanceamento-antes, message=FALSE, warning=FALSE}
+kable(summary(psm_ur)$sum.all,
+      caption = "Balanceamento antes do pareamento") %>%
+  kable_styling()
+```
+
+Abaixo, temos como se comportam as variáveis antes do paraeamento.
+
+```{r balanceamento-apos, warning=FALSE, warning=FALSE}
+kable(summary(psm_ur)$sum.matched,
+      caption = "Balanceamento após o pareamento") %>%
+  kable_styling()
+```
+
+### Estimando o impacto usando o método de pareamento
+
+O quadro apresenta os resultados do pareamento por escore de propensão para o gasto com saúde das famílias, comparando os inscritos no programa com famílias não inscritas, usando dois conjuntos de covariáveis: completo e limitado. A média do gasto das famílias inscritas é de aproximadamente 7,84 US\$, enquanto a média das famílias de comparação pareada é de 17,84 US\$ quando se usa o conjunto completo e de 19,00 US\$ com o conjunto limitado.
+
+```{r impacto-pareamento, message=FALSE, warning=FALSE}
+set.seed(100)
+
+# --- Conjunto completo ---
+matched_ur <- match.data(psm_ur)
+
+impactos_ur <- matched_ur %>%
+  group_by(subclass) %>%
+  summarize(
+    tratado = health_expenditures_1[enrolled == 1],
+    controle = health_expenditures_1[enrolled == 0],
+    impacto = tratado - controle
+  )
+
+# Médias e diferença
+media_tratado_ur <- mean(impactos_ur$tratado)
+media_controle_ur <- mean(impactos_ur$controle)
+dif_ur <- mean(impactos_ur$impacto)
+
+# --- Conjunto limitado ---
+matched_r <- match.data(psm_r)
+
+impactos_r <- matched_r %>%
+  group_by(subclass) %>%
+  summarize(
+    tratado = health_expenditures_1[enrolled == 1],
+    controle = health_expenditures_1[enrolled == 0],
+    impacto = tratado - controle
+  )
+
+# Médias e diferença
+media_tratado_r <- mean(impactos_r$tratado)
+media_controle_r <- mean(impactos_r$controle)
+dif_r <- mean(impactos_r$impacto)
+
+# --- Montar quadro final ---
+quadro <- data.frame(
+  Conjunto = c("Completo", "Limitado"),
+  Inscritos = c(media_tratado_ur, media_tratado_r),
+  Comparacao_Pareada = c(media_controle_ur, media_controle_r),
+  Diferenca = c(dif_ur, dif_r)
+)
+
+quadro
+```
+
+A diferença entre inscritos e comparação pareada, que representa o efeito estimado do programa, é negativa em ambos os casos (-10,00 US\$ no conjunto completo e -11,16 US\$ no conjunto limitado), indicando que a participação no programa está associada a uma redução nos gastos com saúde. A inclusão de mais covariáveis no conjunto completo ajusta melhor a comparação, reduzindo ligeiramente a magnitude da diferença, mas a direção do efeito permanece consistente.
+
+### Avaliação por meio da regressão linear
+
+O resultado da regressão robusta ponderada mostra que, usando o conjunto limitado de variáveis para pareamento, as famílias inscritas no programa gastaram, em média, 11,16 US\$ a menos em saúde do que famílias semelhantes não inscritas. O intercepto indica que as famílias de comparação pareadas gastam cerca de 19,00 US\$. O efeito negativo de enrolled é altamente significativo e o intervalo de confiança sugere que essa redução é precisa e não fruto do acaso. Em resumo, a participação no programa está associada a uma redução consistente e estatisticamente significativa nos gastos com saúde.
+
+```{r regressao-limitado, message=FALSE, warning=FALSE}
+# Regressão robusta no conjunto limitado
+out_lm_r <- lm_robust(
+  health_expenditures_1 ~ enrolled,
+  data = matched_r,
+  clusters = locality_identifier,
+  weights = weights
+)
+
+summary(out_lm_r)
+
+```
+
+O resultado da regressão robusta ponderada para o conjunto completo de variáveis mostra que as famílias inscritas no programa gastaram, em média, 10,00 US\$ a menos em saúde do que famílias semelhantes não inscritas. O intercepto indica que as famílias de comparação pareadas gastam cerca de 17,84 US\$. O coeficiente negativo de enrolled é altamente significativo, com intervalo de confiança de -10,73 a -9,27 US\$, indicando que a redução nos gastos com saúde associada à participação no programa é consistente e não ocorre por acaso. Em resumo, a participação no programa está associada a uma redução significativa e precisa nos gastos com saúde, mesmo quando se considera um conjunto mais amplo de características de linha de base.
+
+```{r regressao-completo, message=FALSE, warning=FALSE}
+# Regressão robusta no conjunto completo
+out_lm_ur <- lm_robust(
+  health_expenditures_1 ~ enrolled,
+  data = matched_ur,
+  clusters = locality_identifier,
+  weights = weights
+)
+
+summary(out_lm_ur)
+
+```
+
+### Avaliando por meio de diferenças em diferenças
+
+A regressão de diferença em diferenças ponderada pelo escore de propensão, utilizando o conjunto limitado de covariáveis, mostra que o gasto médio com saúde das famílias inscritas no programa aumentou em aproximadamente 3,07 unidades desde a linha de base. Esse resultado reflete a variação temporal nos gastos das famílias participantes, controlando pelas características observadas no início do período e ajustando os pesos do pareamento.
+
+O coeficiente estimado para a variável enrolled foi de -9,72, estatisticamente significativo ao nível de 1%. Isso indica que, em média, a participação no programa está associada a uma redução de cerca de 9,72 unidades no aumento dos gastos de saúde das famílias em comparação com as não inscritas. O resultado é robusto e sugere que o programa exerceu um efeito relevante e consistente na redução dos gastos com saúde das famílias participantes.
+
+```{r did-limitado, message=FALSE, warning=FALSE}
+#  Preparar os dados longos com pesos do pareamento 
+df_long_match_r <- dados_wide %>%
+  left_join(matched_r %>% dplyr::select(household_identifier, weights), 
+            by = "household_identifier") %>%
+  filter(!is.na(weights)) 
+
+# Criar a variável de diferença para DID 
+df_long_match_r <- df_long_match_r %>%
+  mutate(diff = health_expenditures_1 - health_expenditures_0)
+
+# Rodar o DID ponderado 
+did_reg_r <- lm_robust(
+  diff ~ enrolled,
+  data = df_long_match_r,
+  weights = weights,
+  clusters = locality_identifier
+)
+
+summary(did_reg_r)
+```
+
+A regressão de diferença em diferenças ponderada pelo escore de propensão, utilizando o conjunto completo de covariáveis, indica que os gastos médios com saúde das famílias inscritas no programa aumentaram em aproximadamente 2,81 unidades desde a linha de base. Esse resultado reflete a variação temporal nos gastos das famílias participantes após o pareamento, garantindo que as comparações sejam feitas entre grupos mais similares em termos de suas características observáveis iniciais.
+
+O coeficiente estimado para a variável enrolled foi de -9,46, altamente significativo ao nível de 1%. Isso significa que a participação no programa está associada a uma redução de cerca de 9,46 unidades no aumento dos gastos de saúde das famílias em comparação com as não inscritas. A magnitude e a significância estatística do efeito confirmam que o programa teve um impacto substancial na diminuição dos custos de saúde, mesmo quando se considera um conjunto mais amplo de variáveis de controle.
+
+```{r did-completo, message=FALSE, warning=FALSE}
+# Preparar os dados longos com pesos do pareamento (conjunto completo) 
+df_long_match_ur <- dados_wide %>%
+  left_join(matched_ur %>% dplyr::select(household_identifier, weights), 
+            by = "household_identifier") %>%
+  filter(!is.na(weights)) 
+
+# Criar a variável de diferença para DID 
+df_long_match_ur <- df_long_match_ur %>%
+  mutate(diff = health_expenditures_1 - health_expenditures_0)
+
+# Rodar o DID ponderado 
+did_reg_ur <- lm_robust(
+  diff ~ enrolled,
+  data = df_long_match_ur,
+  weights = weights,
+  clusters = locality_identifier
+)
+
+summary(did_reg_ur)
+```
