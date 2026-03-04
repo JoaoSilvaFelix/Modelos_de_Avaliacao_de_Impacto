@@ -1,0 +1,294 @@
+---
+title: 'Diff-in-Diff múltiplos períodos'
+author: " "
+date: "08-01-2026"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_title: Sumário
+    number_sections: true
+---
+
+### Contexto
+
+Este trabalho consiste em uma replicação do artigo Difference-in-Differences with Multiple Time Periods, de Brantly Callaway e Pedro H. C. SantAnna. A metodologia e o código utilizados seguem exatamente o material disponibilizado pelos autores em https://bcallaway11.github.io/did/articles/did-basics.html
+
+
+A aplicação empírica analisa o efeito da política de salário mínimo sobre o emprego de adolescentes (The effect of minimum wage policy on teen employment).
+
+
+```{r bibliotecas, message=FALSE, warning=FALSE}
+library(did)
+library(tidyverse)
+```
+
+### Exemplo com dados simulados
+
+Nesse exemplo, o estudo acompanha pessoas (ou unidades) ao longo de quatro momentos no tempo. Parte dessas pessoas passa a receber uma política ou tratamento, mas não todas ao mesmo tempo: algumas começam antes, outras depois, de forma aleatória. Outra parte nunca recebe o tratamento e serve como grupo de comparação. A ideia central é que quanto mais tempo alguém permanece exposto à política, maior é o efeito observado, e esse efeito é considerado igual para todos os grupos. Além disso, assume-se que as pessoas não mudam seu comportamento antes de começarem a receber o tratamento, ou seja, só reagem depois que a política entra em vigor para elas.
+
+#### Estimando os efeitos médios de tratamento por grupo e período
+
+
+```{r conjunto-de-dados, message=FALSE, warning=FALSE}
+# define a semente para que os resultados possam ser reproduzidos
+set.seed(1814)
+
+# gera um conjunto de dados com 4 períodos de tempo
+sp <- reset.sim()
+sp$te <- 0
+time.periods <- 4
+
+# adiciona efeitos dinâmicos do tratamento
+sp$te.e <- 1:time.periods
+
+dta <- build_sim_dataset(sp)
+
+nrow(dta)
+```
+A tabela apresenta um conjunto de dados em formato longitudinal, no qual as mesmas unidades são observadas ao longo de diferentes períodos de tempo. Cada linha corresponde a uma observação de uma unidade em um determinado período.
+
+A coluna id identifica a unidade analisada, como um indivíduo, firma ou região, e a mesma unidade aparece em várias linhas porque é observada ao longo de diferentes períodos de tempo. A coluna period indica o período da observação, que neste exemplo varia de 1 a 4. A coluna G informa o período em que a unidade passa a receber o tratamento pela primeira vez; por exemplo, G = 3 significa que a unidade começa a ser tratada a partir do terceiro período. A variável treat indica se a unidade está efetivamente sob tratamento em cada período, assumindo valor 1 quando o tratamento já está ativo e 0 caso contrário. A coluna Y representa a variável de interesse, isto é, o resultado que se deseja analisar, como emprego ou salário. A variável X corresponde a uma característica observável da unidade que não varia ao longo do tempo e pode ser utilizada como variável de controle. Por fim, a coluna cluster identifica o grupo ao qual a unidade pertence, sendo utilizada para o cálculo de erros-padrão agrupados.
+
+```{r tabela-inicial, message=FALSE, warning=FALSE}
+# visualiza as primeiras linhas do conjunto de dados
+head(dta)
+```
+
+A principal função para estimar os efeitos médios de tratamento por grupo e período é a função att_gt.
+
+```{r estimacao, message=FALSE, warning=FALSE}
+example_attgt <- att_gt(yname = "Y",     
+                        tname = "period",  
+                        idname = "id",    
+                        gname = "G",      
+                        xformla = ~X,    
+                        data = dta        
+                        )
+
+summary(example_attgt)
+```
+
+Para as unidades que entraram no tratamento no período 2 (Group = 2), o efeito médio do tratamento no próprio período 2 (Time = 2), medido por ATT(g,t), foi estimado em aproximadamente 0,92, o que indica que, em média, essas unidades apresentaram um valor da variável de interesse 0,92 unidades maior do que apresentariam na ausência do tratamento, mantendo as demais condições constantes. O valor de Std. Error = 0,0638 indica boa precisão da estimativa, e o intervalo [95% Simult. Conf. Band], que varia de 0,75 a 1,09, não inclui o valor zero, evidenciando que o efeito estimado é estatisticamente diferente de zero.
+
+O P-value for pre-test of parallel trends assumption, igual a 0,60857, indica que não há evidência estatística para rejeitar a hipótese de tendências paralelas, sugerindo que, antes do tratamento, a evolução da variável de interesse nos grupos tratados e de controle era semelhante, o que sustenta a validade da estratégia de Diferenças-em-Diferenças. O Control Group: Never Treated informa que o grupo de comparação é formado por unidades que nunca receberam o tratamento, enquanto Anticipation Periods: 0 indica que se assume ausência de antecipação, isto é, as unidades não alteram seu comportamento antes de entrarem no tratamento. Por fim, Estimation Method: Doubly Robust indica que a estimação utiliza um método duplamente robusto, que permanece consistente mesmo que apenas o modelo do resultado ou o modelo de seleção para o tratamento esteja corretamente especificado.
+
+
+```{r plote-resultados, message=FALSE, warning=FALSE}
+ggdid(example_attgt)
+```
+A figura apresenta um gráfico separado para cada grupo, identificado como Group 2, Group 3 e assim por diante. Em cada gráfico, são mostrados os efeitos médios do tratamento ao longo do tempo, acompanhados de seus intervalos de confiança. Os pontos vermelhos correspondem aos períodos anteriores ao início do tratamento e servem principalmente para verificar se a hipótese de tendências paralelas é plausível. Já os pontos azuis representam os períodos após o início do tratamento e indicam o efeito médio da política para as unidades de cada grupo em cada momento do tempo.
+
+#### Agregando os efeitos médios de tratamento por grupo e período
+
+Quando existem muitos grupos e muitos períodos, analisar efeito por efeito fica confuso e pouco prático. Por isso, em vez de olhar cada efeito separadamente, a função aggte permite resumir os resultados em medidas mais gerais, facilitando a interpretação do impacto médio do tratamento.
+
+##### Agregação simples
+
+Uma abordagem natural é calcular uma média ponderada de todos os efeitos médios de tratamento por grupo e período, atribuindo a cada grupo um peso proporcional ao seu tamanho. Essa agregação pode ser feita usando a função aggte com o argumento type = "simple". Esse tipo de agregação evita imediatamente o problema de pesos negativos que pode ocorrer em regressões de efeitos fixos bidimensionais, mas geralmente existem alternativas melhores. Em particular, essa agregação simples tende a dar mais peso aos grupos que foram tratados mais cedo, apenas porque eles aparecem em mais períodos após o início do tratamento. Na maioria das aplicações, é provável que existam métodos mais adequados para agregar os efeitos.
+
+```{r agregacao-simples, message=FALSE, warning=FALSE}
+agg.simple <- aggte(example_attgt, type = "simple")
+summary(agg.simple)
+```
+
+O valor ATT = 1,6583 indica que, em média, o tratamento aumentou a variável de interesse em aproximadamente 1,66 unidades, considerando conjuntamente todos os grupos e períodos analisados. O Std. Error = 0,0333 mostra que essa estimativa é bastante precisa, e o intervalo de confiança de 95%, que vai de 1,5931 a 1,7236, não inclui o valor zero, o que indica que o efeito médio agregado é estatisticamente diferente de zero, como sinalizado pelo símbolo (*). O grupo de controle é formado por unidades Never Treated, assume-se Anticipation Periods = 0, ou seja, ausência de antecipação do tratamento, e a estimação foi realizada por meio de um método Doubly Robust, que garante consistência mesmo que apenas um dos modelos utilizados esteja corretamente especificado.
+
+
+##### Efeitos dinâmicos e Event Studies
+
+Uma abordagem alternativa bastante utilizada é consolidar os efeitos médios por grupo e período em um gráfico de estudo de evento. Dessa forma, os efeitos médios de tratamento podem ser resumidos em efeitos médios de acordo com o tempo de exposição ao tratamento.
+
+```{r ed-es, message=FALSE, warning=FALSE}
+agg.es <- aggte(example_attgt, type = "dynamic")
+summary(agg.es)
+```
+
+A parte Overall summary of ATT's indica que, ao agregar os efeitos médios de todos os grupos e períodos, o efeito médio do tratamento (ATT) é aproximadamente 1,99, com Std. Error = 0,0375, e o intervalo de confiança de 95%, de 1,9169 a 2,0639, não inclui zero, mostrando que o efeito médio agregado é estatisticamente significativo. A seção Dynamic Effects detalha os efeitos em cada período relativo ao início do tratamento: os event times -2 e -1, antes do tratamento, têm efeitos próximos de zero e não significativos, sugerindo ausência de tendências prévias; o event time 0, quando o tratamento começa, apresenta efeito positivo e significativo (0,9929); e os event times 1 e 2, após o início do tratamento, mostram efeitos positivos maiores (2,02 e 2,96) e significativos, indicando que o impacto do tratamento aumenta com o tempo de exposição. O Control Group é formado por unidades Never Treated, assume-se Anticipation Periods = 0, e a estimação foi feita com método Doubly Robust, garantindo consistência mesmo que apenas um dos modelos esteja corretamente especificado.
+
+```{r plote-ed-es, message=FALSE, warning=FALSE}
+ggdid(agg.es)
+```
+
+Nesta figura, o eixo x representa a duração da exposição ao tratamento. Uma duração igual a 0 mostra o efeito médio de participar do tratamento para os grupos no período em que eles recebem o tratamento pela primeira vez (efeito instantâneo do tratamento). Uma duração igual a -1 corresponde ao período anterior à primeira participação dos grupos no tratamento, e uma duração igual a 1 corresponde ao primeiro período após a exposição inicial ao tratamento.
+
+##### Efeitos específicos por grupo
+
+Podemos olhar para os efeitos médios de tratamento de cada grupo individualmente. Também é simples resumir os efeitos de cada grupo ao longo do tempo em um efeito médio específico para aquele grupo.
+
+```{r eeg, message=FALSE, warning=FALSE}
+agg.gs <- aggte(example_attgt, type = "group")
+summary(agg.gs)
+```
+
+A seção Overall summary of ATT's mostra que, ao agregar os efeitos médios de todos os grupos tratados, o efeito médio do tratamento (ATT) é aproximadamente 1,488, com Std. Error = 0,0343. O intervalo de confiança de 95%, que vai de 1,4208 a 1,5553, não inclui zero, indicando que o efeito médio agregado é estatisticamente significativo, como sinalizado pelo asterisco (*). Em outras palavras, participando do tratamento, as unidades aumentaram em média cerca de 1,49 unidades na variável de interesse.
+
+A seção Group Effects detalha o efeito médio do tratamento para cada grupo individualmente: o Grupo 2 tem efeito médio de 1,9545, o Grupo 3 de 1,5835, e o Grupo 4 de 0,9523, todos com intervalos de confiança que não incluem zero, mostrando que os efeitos são estatisticamente significativos. Isso indica que o impacto do tratamento varia entre os grupos, sendo maior para os grupos que receberam o tratamento mais cedo (Grupo 2) e menor para os tratados mais tarde (Grupo 4).
+
+Em resumo, a análise mostra tanto o efeito geral médio do tratamento quanto como ele difere entre os grupos.
+
+
+```{r plote-eeg, message=FALSE, warning=FALSE}
+ggdid(agg.gs)
+```
+
+Nesta figura, o eixo y representa os grupos, e o eixo x mostra o efeito médio do tratamento para as unidades de cada grupo, calculado considerando todos os períodos após o início do tratamento para aquele grupo. No exemplo, o efeito médio é maior para o Grupo 2, porque o impacto do tratamento cresce com o tempo de exposição, e esse grupo é o que ficou mais tempo exposto ao tratamento.
+
+O Overall ATT calcula a média dos efeitos de tratamento específicos de cada grupo. Na prática, esse valor é uma boa forma de resumir o efeito geral de participar do tratamento, pois representa o efeito médio que todas as unidades que receberam o tratamento em qualquer período experimentaram. Dessa forma, ele é interpretado de maneira semelhante ao ATT do caso clássico dos livros, em que existem exatamente dois períodos e dois grupos.
+
+##### Efeitos ao longo do tempo do calendário
+
+Por fim, o pacote did permite realizar agregações ao longo de diferentes períodos de tempo.
+
+```{r ct, message=FALSE, warning=FALSE}
+agg.ct <- aggte(example_attgt, type = "calendar")
+summary(agg.ct)
+```
+
+Essa saída mostra o efeito médio do tratamento ao longo do tempo, considerando todos os grupos em cada período do calendário. O ATT = 1,48 significa que, em média, participar do tratamento aumentou a variável de interesse em cerca de 1,48 unidades. O erro-padrão é pequeno (0,0347), indicando que a estimativa é bastante precisa, e o intervalo de confiança de 95% (de 1,41 a 1,55) não inclui zero, mostrando que o efeito é estatisticamente significativo, como indica o asterisco (*).
+
+No período 2, o efeito médio estimado é 0,92, com erro-padrão 0,0632 e intervalo de confiança de 95% entre 0,77 e 1,07, indicando efeito estatisticamente significativo (*). No período 3, o efeito sobe para 1,55 (IC 1,43–1,67) e no período 4 chega a 1,97 (IC 1,85–2,09), mostrando que o impacto do tratamento cresce ao longo do tempo.
+
+```{r plote-ct, message=FALSE, warning=FALSE}
+ggdid(agg.ct)
+```
+
+Nesta figura, o eixo x representa o período de tempo, e os valores no eixo y mostram o efeito médio de participar do tratamento em cada período para todos os grupos que receberam o tratamento naquele período.
+
+#### Selecionando Grupos de Controle Alternativos
+
+Por padrão, o pacote did utiliza como grupo de controle as unidades que nunca recebem o tratamento. Se não houver um grupo que nunca seja tratado, o pacote descarta o último período e considera como controle as unidades que só serão tratadas nesse último período (isso gera um aviso). Outra alternativa é usar como grupo de controle os “ainda não tratados”, que incluem tanto as unidades que nunca serão tratadas quanto aquelas que, em um determinado período, ainda não receberam o tratamento, mas receberão mais adiante. Esse grupo é pelo menos tão grande quanto o grupo de nunca tratados, embora varie ao longo do tempo. Para usar os “ainda não tratados” como controle, basta definir a opção control_group="notyettreated"
+
+```{r alternative-control, message=FALSE, warning=FALSE}
+example_attgt_altcontrol <- att_gt(yname = "Y",
+                                   tname = "period",
+                                   idname = "id",
+                                   gname = "G",
+                                   xformla = ~X,
+                                   data = dta,
+                                   control_group = "notyettreated"          
+                                   )
+summary(example_attgt_altcontrol)
+```
+
+Essa saída mostra os efeitos médios do tratamento por grupo e período usando como grupo de controle os “ainda não tratados” (ou seja, unidades que ainda não receberam o tratamento naquele período, incluindo os que nunca serão tratados).
+
+
+O valor ATT(g,t) indica o efeito médio do tratamento para cada grupo em cada período. Por exemplo, o Grupo 2 no período 2 tem ATT = 0,9371, com Std. Error = 0,0531 e intervalo de confiança de 95% entre 0,7951 e 1,0790, não incluindo zero, o que mostra que o efeito é estatisticamente significativo (*). À medida que o tempo passa, o efeito para o Grupo 2 aumenta (1,96 no período 3 e 2,95 no período 4), indicando que o impacto do tratamento cresce com a duração da exposição. Já para o Grupo 3 e Grupo 4, os efeitos no período inicial não são significativos (os intervalos incluem zero), mas se tornam positivos e significativos em períodos posteriores, mostrando que o efeito do tratamento surge conforme o grupo passa a ser exposto.
+
+O p-valor do teste de pré-tendências paralelas é 0,65089, sugerindo que não há evidência de diferenças pré-existentes entre os grupos antes do início do tratamento, o que reforça a validade da análise.
+
+Em resumo, usando “ainda não tratados” como controle, os efeitos do tratamento são consistentes, crescendo ao longo do tempo para os grupos tratados, e o teste prévio indica que os grupos eram comparáveis antes do tratamento.
+
+#### Métodos de Estimação Alternativos
+
+O pacote did implementa todos os estimadores 2×2 DiD que estão no pacote DRDID. Por padrão, o pacote did utiliza estimadores “doubly robust”, baseados em regressões lineares na primeira etapa para a variável de resultado e em logit para a propensão generalizada. Outras opções disponíveis são “ipw”, que usa ponderação por probabilidade inversa, e “reg”, que utiliza regressão.
+
+```{r mea, message=FALSE, warning=FALSE}
+#example_attgt_reg <- att_gt(yname = "Y",
+#                            tname = "period",
+#                            idname = "id",
+#                            gname = "G",
+#                            xformla = ~X,
+#                            data = data,
+#                            est_method = "reg"
+#                            )
+#summary(example_attgt_reg)
+```
+### Exemplo com dados reais
+
+A seguir, usamos um subconjunto de dados que vem de Callaway e Sant’Anna (2020). Este é um conjunto de dados que contém as taxas de emprego entre adolescentes por condado no período de 2003 a 2007. Os dados podem ser carregados por
+
+```{r dados-reais, message=FALSE, warning=FALSE}
+data(mpdta)
+head(mpdta)
+```
+
+#### O Efeito do Salário Mínimo sobre o Emprego Juvenil
+
+##### Avaliação sem covariáveis
+
+```{r estimacao-sem-covariaveis, message=FALSE, warning=FALSE}
+mw.attgt <- att_gt(yname = "lemp",
+                   gname = "first.treat",
+                   idname = "countyreal",
+                   tname = "year",
+                   xformla = ~1,
+                   data = mpdta
+                   )
+
+# resumir os resultados
+summary(mw.attgt)
+```
+
+```{r plote-sem-covariaveis, message=FALSE, warning=FALSE}
+ggdid(mw.attgt, ylim = c(-.3, .3))
+```
+Nos condados tratados em 2004, o aumento do salário mínimo teve um efeito negativo e estatisticamente significativo sobre o emprego juvenil nos anos de 2006 e 2007, indicando uma redução do emprego nesse grupo. Para os condados tratados em 2006 e 2007, os efeitos estimados são próximos de zero e não significativos, sugerindo nenhum impacto relevante nesses grupos. De forma geral, os resultados indicam que o efeito do aumento do salário mínimo sobre o emprego juvenil é heterogêneo, sendo mais pronunciado nos condados tratados mais cedo, com impactos negativos observados dois e três anos após a implementação.
+
+##### Agregar os efeitos médios do tratamento por grupo e tempo
+
+```{r agregacao-grupo-tempo, message=FALSE, warning=FALSE}
+# agregar os efeitos médios do tratamento por grupo e tempo
+mw.dyn <- aggte(mw.attgt, type = "dynamic")
+summary(mw.dyn)
+```
+```{r plote-agregacao-grupo-tempo, message=FALSE, warning=FALSE}
+ggdid(mw.dyn, ylim = c(-.3, .3))
+```
+
+O código mw.dyn.balance <- aggte(mw.attgt, type = "dynamic", balance_e = 1) calcula os efeitos dinâmicos do aumento do salário mínimo ao longo do tempo, considerando diferentes “event-times” após a intervenção. Ao definir balance_e = 1, ele exclui grupos que não têm dados suficientes para o período e= 1, garantindo comparações balanceadas entre os grupos tratados. O summary(mw.dyn.balance) exibe os efeitos médios, erros-padrão e intervalos de confiança, permitindo interpretar o impacto do tratamento de forma confiável ao longo dos eventos.
+
+```{r new-balance, message=FALSE, warning=FALSE}
+mw.dyn.balance <- aggte(mw.attgt, type = "dynamic", balance_e = 1)
+summary(mw.dyn.balance)
+```
+
+```{r new-balance-plote, message=FALSE, warning=FALSE}
+ggdid(mw.dyn.balance, ylim = c(-.3, .3))
+```
+
+##### Avaliação com covariáveis
+
+```{r estimcacao-com-covariaveis, message=FALSE, warning=FALSE}
+mw.attgt.X <- att_gt(yname = "lemp",
+                     gname = "first.treat",
+                     idname = "countyreal",
+                     tname = "year",
+                     xformla = ~lpop,
+                     data = mpdta
+                     )
+
+# resumir os resultados
+summary(mw.attgt.X)
+```
+
+```{r plote-com-covariaveis, message=FALSE, warning=FALSE}
+ggdid(mw.attgt.X, ylim = c(-.3, .3))
+```
+
+##### Agregar os efeitos médios do tratamento por grupo e tempo
+
+```{r agregacao-com-covariaveis, message=FALSE, warning=FALSE}
+# agregar os efeitos médios do tratamento por grupo e tempo
+mw.dyn.X <- aggte(mw.attgt.X, type = "dynamic")
+summary(mw.dyn.X)
+```
+
+```{r tempo-exposicao-covariavel, message=FALSE, warning=FALSE}
+ggdid(mw.dyn.X, ylim = c(-.3, .3))
+```
+
+
+```{r balanceamento-covariavel, message=FALSE, warning=FALSE}
+mw.dyn.balance.X <- aggte(mw.attgt.X, type = "dynamic", balance_e = 1)
+summary(mw.dyn.balance.X)
+```
+```{r plote-balance-covariavel, message=FALSE, warning=FALSE}
+ggdid(mw.dyn.balance.X, ylim = c(-.3, .3))
+```
+
+
