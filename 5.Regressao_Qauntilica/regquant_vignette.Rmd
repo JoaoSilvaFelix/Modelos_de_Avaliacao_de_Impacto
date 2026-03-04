@@ -1,0 +1,363 @@
+---
+title: "quantreg_vignette"
+author: "joao_felix"
+date: "2026-02-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Bibliotecas
+
+```{r bibliotecas, message=FALSE, warning=FALSE}
+library(quantreg)
+library(knitr)
+library(MASS)
+library(splines)
+```
+
+### Exemplo 1: Relação entre renda domiciliar e gastos com alimentos
+
+O texto analisa dados clássicos de Engel sobre a relação entre renda domiciliar e gasto com alimentos, apresentando ajustes por regressão quantílica. Além disso, ilustra o uso de restrições de desigualdade nos coeficientes desse modelo por meio de dados simulados.
+
+#### Iniciando
+
+```{r dados, message=FALSE, warning=FALSE}
+# Importando os dados
+data(engel)
+```
+
+Abaixo se estima a relação entre renda (income) e gasto com alimentos (foodexp) no quantil 50%, ou seja, no comportamento mediano das famílias. Os coeficientes estimados pela regressão quantílica no quantil τ = 0,5 indicam que o gasto mediano com alimentos aumenta à medida que a renda domiciliar cresce. O intercepto estimado sugere um nível base de gasto com alimentos quando a renda é nula, o que não possui interpretação econômica direta, mas funciona como um parâmetro técnico do modelo. O coeficiente associado à renda mostra que, para cada unidade adicional de renda, o gasto mediano com alimentos aumenta em aproximadamente 0,56 unidades, evidenciando uma relação positiva entre essas variáveis.
+
+Do ponto de vista econômico, esse resultado está em consonância com a Lei de Engel, segundo a qual o gasto com alimentos cresce com a renda, porém a um ritmo inferior ao crescimento da própria renda. A utilização da regressão quantílica permite capturar o comportamento típico das famílias, sendo menos sensível a valores extremos do que a regressão por mínimos quadrados ordinários. Assim, os resultados sugerem que o efeito da renda sobre o consumo de alimentos é estatisticamente significativo e economicamente consistente no centro da distribuição do gasto.
+
+```{r primeiro-ajusre, message=FALSE, warning=FALSE}
+# Fazendo um primeiro ajuste
+fit1 <- rq(foodexp ~income, tau = .5, data = engel)
+summary(fit1)
+```
+
+Para extrair os resíduos ou os coeficientes da relação ajustada
+
+```{r residuos-coeficientes, message=FALSE, warning=FALSE}
+r1 <- resid(fit1)
+c1 <- coef(fit1)
+```
+
+#### Inferência formal
+
+Resumo do modelo utilizando o método "nid" (kernel density estimation sob a hipótese de identidade e independência (i.i.d.) dos erros) para calcular os erros-padrões
+
+```{r}
+summary(fit1, se = "nid")
+```
+
+O gráfico mostra como o gasto com alimentos varia conforme a renda das famílias. Cada ponto representa um domicílio da classe trabalhadora belga do século XIX. As linhas de regressão quantílica indicam o comportamento do gasto em diferentes partes da distribuição: os quantis mais baixos mostram famílias que gastam relativamente menos com alimentos, enquanto os quantis mais altos representam aquelas que gastam mais. A linha da mediana resume o comportamento típico das famílias, e a linha tracejada da regressão por mínimos quadrados mostra a média condicional. A comparação entre essas linhas permite observar que o efeito da renda sobre o gasto com alimentos não é uniforme ao longo da distribuição, reforçando a utilidade da regressão quantílica para capturar heterogeneidades no consumo.
+
+```{r fig1, message=FALSE, warning=FALSE}
+# Anexar base de dados
+attach(engel)
+
+# Gráfico de dispersão
+plot(
+  income, foodexp,
+  type = "n",
+  cex = 0.25,
+  xlab = "Household Income",
+  ylab = "Food Expenditure"
+)
+
+points(income, foodexp, cex = 0.5, col = "blue")
+
+# Regressão quantílica na mediana (τ = 0,5)
+abline(
+  rq(foodexp ~ income, tau = 0.5),
+  col = "blue"
+)
+
+# Regressão OLS
+abline(
+  lm(foodexp ~ income),
+  lty = 2,
+  col = "red"
+)
+
+# Quantis adicionais
+taus <- c(0.05, 0.10, 0.25, 0.75, 0.90, 0.95)
+
+for (i in seq_along(taus)) {
+  abline(
+    rq(foodexp ~ income, tau = taus[i]),
+    col = "gray"
+  )
+}
+```
+
+Gráficos dos coeficientes de Engel: o coeficiente angular (inclinação) e o intercepto da regressão quantílica linear estimada para os dados de gasto com alimentação de Engel são apresentados como funções de τ. Observe que a variável renda domiciliar foi centralizada em torno de seu valor médio para esse gráfico; assim, o intercepto passa a ser, na verdade, um centercept, estimando a função quantílica do gasto com alimentação condicionada à renda média.
+
+```{r fig2, fig.cap="Coeficientes da regressão quantílica ao longo dos quantis", message=FALSE, warning=FALSE}
+
+# Centralizando a renda
+xx <- engel$income - mean(engel$income)
+
+# Regressões quantílicas (0,02 a 0,98)
+fit1 <- summary(
+  rq(foodexp ~ xx, tau = 2:98 / 100)
+)
+
+# Gráfico
+plot(fit1, mfrow = c(1, 2))
+```
+
+
+```{r}
+# Centralizando a renda (corrigido)
+xx <- engel$income - mean(engel$income)
+
+# Regressões quantílicas
+fit2 <- summary(
+  rq(foodexp ~ xx, tau = c(0.05, 0.25, 0.5, 0.75, 0.95))
+)
+
+# Quantis
+taus <- c(0.05, 0.25, 0.5, 0.75, 0.95)
+
+# Montar tabela simples (coeficientes)
+tabela <- data.frame(
+  Quantil = taus,
+  Intercepto = sapply(seq_along(fit2), function(i)
+    fit2[[i]]$coefficients[1, 1]
+  ),
+  xx = sapply(seq_along(fit2), function(i)
+    fit2[[i]]$coefficients[2, 1]
+  )
+)
+
+# Exibir tabela
+tabela
+```
+
+Se quisermos ver todas as soluções distintas da regressão quantílica para uma aplicação de modelo específica, podemos especificar um tau fora do intervalo [0,1], por exemplo.
+
+```{r todos-quantis-distintos, message=FALSE, warning=FALSE}
+z <- rq(foodexp~income,tau=-1)
+```
+
+
+Esta forma da função realiza as etapas de programação paramétrica necessárias para encontrar todo o caminho amostral do processo de regressão quantílica. O objeto retornado é da classe `rq.process` e possui vários componentes: a solução primal em `z$sol` e a solução dual em `z$dsol`.
+
+#### Mais sobre Testes
+
+Agora, vamos considerar outras formas de teste formal. Uma primeira questão natural é: as relações estimadas pela regressão quantílica estão de acordo com a hipótese de deslocamento de localização, que assume que todas as funções quantílicas condicionais possuem os mesmos parâmetros de inclinação? Para começar, suponha que apenas estimemos os ajustes dos quartis para os dados de Engel e observemos a saída padrão:
+
+```{r formal-testing, message=FALSE, warning=FALSE}
+# Regressões quantílicas para diferentes quantis
+fit1 <- rq(foodexp~income,tau=.25) 
+fit2 <- rq(foodexp~income,tau=.50) 
+fit3 <- rq(foodexp~income,tau=.75)
+```
+
+Suponha que quiséssemos testar se os coeficientes angulares (as inclinações) são iguais nos três quartis. Isso é feito com o comando anova da seguinte forma:
+
+```{r anova, message=FALSE, warning=FALSE}
+# ANOVA entre os modelos originais
+anova(fit1, fit2, fit3)
+```
+
+O valor-p obtido no teste ANOVA entre as regressões quantílicas é extremamente pequeno (2.449e-07), muito menor que 0,05, indicando evidência estatística forte contra a hipótese nula de que as inclinações são iguais nos três quantis. Portanto, rejeita-se a hipótese nula, o que significa que os coeficientes angulares diferem significativamente entre pelo menos dois dos três quartis analisados. Na prática, isso implica que o efeito da renda sobre a despesa com comida não é constante ao longo da distribuição de gastos. Ou seja, para indivíduos com menor despesa (25º percentil), o efeito da renda pode ser diferente daquele observado para indivíduos com despesa mediana (50º percentil) ou mais elevada (75º percentil). Esse resultado evidencia que uma regressão linear simples não captura toda a heterogeneidade da relação entre renda e gasto com comida, mostrando que a regressão quantílica fornece informações mais detalhadas sobre como o efeito da renda varia ao longo da distribuição da despesa.
+
+A figura abaixo plota as funções quantílicas e de densidade condicional estimadas para gastos com alimentação com base nos dados de Engel: São apresentadas duas estimativas, uma para domicílios relativamente pobres com renda de 504,5 francos belgas, e outra para domicílios relativamente ricos com renda de 1.538,99 francos belgas.
+
+
+```{r fig3, message=FALSE, warning=FALSE}
+x.poor <- quantile(income, .1) # Definimos "pobre" como o quantil 0.1 da distribuição da amostra
+x.rich <- quantile(income, .9) # Definimos "rico" como o quantil 0.9 da distribuição da amostra
+ps <- z$sol[1,]
+qs.poor <- c(c(1, x.poor) %*% z$sol[4:5,])
+qs.rich <- c(c(1, x.rich) %*% z$sol[4:5,])
+
+# Agora plotar as duas funções quantílicas para comparar
+par(mfrow = c(1,2))
+plot(c(ps, ps), c(qs.poor, qs.rich), type="n",
+     xlab = expression(tau), ylab = "quantil")
+plot(stepfun(ps, c(qs.poor[1], qs.poor)), do.points=FALSE, add=TRUE)
+plot(stepfun(ps, c(qs.poor[1], qs.rich)), do.points=FALSE, add=TRUE,
+     col.hor = "gray", col.vert = "gray")
+
+# Agora plotar as estimativas de densidade condicional associadas
+# Pesos a partir de ps (processo)
+ps.wts <- (c(0, diff(ps)) + c(diff(ps), 0)) / 2
+ap <- akj(qs.poor, z=qs.poor, p = ps.wts)
+ar <- akj(qs.rich, z=qs.rich, p = ps.wts)
+plot(c(qs.poor, qs.rich), c(ap$dens, ar$dens), type="n",
+     xlab= "Gastos com Alimentacao", ylab= "Densidade")
+lines(qs.rich, ar$dens, col="gray")
+lines(qs.poor, ap$dens, col="black")
+legend("topright", c("pobre", "rico"), lty = c(1,1), col=c("black","gray"))
+```
+
+Abaixo as estimativas de regressão quantílica para uma versão log-linear do modelo de gastos com alimentação de Engel
+
+```{r fig4, message=FALSE, warning=FALSE}
+plot(income, foodexp, log="xy", xlab="Household Income", ylab="Food Expenditure")
+taus <- c(.05, .1, .25, .75, .90, .95)
+abline(rq(log10(foodexp) ~ log10(income), tau=.5), col="blue")
+abline(lm(log10(foodexp) ~ log10(income)), lty=3, col="red")
+for(i in 1:length(taus)) {
+  abline(rq(log10(foodexp) ~ log10(income), tau=taus[i]), col="gray")
+}
+```
+
+### Exemplo 2: Preços semanais da gasolina nos EUA
+
+#### Inferência sobre o Processo de Regressão Quantílica
+
+Na estimação por mínimos quadrados de modelos lineares, assume-se implicitamente que é possível modelar os efeitos das covariáveis como um shift puro de localização, ou, de forma um pouco mais geral, como uma mudança de localização e escala da distribuição da resposta. No caso mais simples de um único efeito de tratamento binário, isso equivale a assumir que as distribuições de tratamento e controle diferem por um shift de localização ou por um deslocamento de localização e escala. Testes dessas hipóteses no modelo de duas amostras podem ser realizados utilizando a estatística convencional de Kolmogorov-Smirnov para duas amostras, mas a presença de parâmetros de incômodo desconhecidos complica muito a teoria da distribuição limite. Problemas semelhantes persistem na extensão desses testes para o contexto geral da regressão quantílica.
+
+A aplicação considerada é o modelo de autoregressão quantílica (QAR) para os preços semanais da gasolina nos EUA, conforme estudado por Koenker e Xiao [2006]. Os dados consistem em 699 observações semanais, de agosto de 1990 a fevereiro de 2004. O modelo analisado é um QAR(4), utilizando quatro defasagens. O objetivo é testar se a AR(4) clássica de deslocamento de localização é uma alternativa plausível à especificação QAR(4), ou seja, se os quatro coeficientes defasados do QAR são constantes em relação a tau.
+
+Para realizar o teste, podemos calculá-lo usando o processo completo de regressão quantílica ou em uma grade moderadamente detalhada de taus:
+
+```{r teste-q4, message=FALSE, warning=FALSE}
+data(gasprice)
+x <- gasprice
+n <- length(x)
+p <- 5 # comprimento da defasagem
+X <- cbind(x[(p-1):(n-1)], x[(p-2):(n-2)], x[(p-3):(n-3)], x[(p-4):(n-4)])
+y <- x[p:n]
+T1 <- KhmaladzeTest(y ~ X, taus = 1:99/100, nullH="location")
+T2 <- KhmaladzeTest(y ~ X, taus = 10:290/300, nullH="location", se="ker")
+```
+
+#### Regressão quantílica não linear
+
+Modelos de regressão quantílica com funções de resposta não lineares nos parâmetros podem ser estimados usando a função nlrq. Para esses modelos, a especificação da fórmula do modelo é um pouco mais complexa do que para modelos lineares comuns, mas segue as convenções do comando nls do R para estimação por mínimos quadrados não lineares.
+
+```{r rqnl, message=FALSE, warning=FALSE}
+n <- 200
+df <- 8
+delta <- 8
+set.seed(4003)
+x <- sort(rt(n, df))
+u <- runif(n)
+v <- -log(1 - (1 - exp(-delta)) / (1 + exp(-delta * pt(x, df)) * ((1 / u) - 1))) / delta
+y <- qt(v, df)
+```
+
+
+Plotamos as observações, sobrepomos três funções quantílicas condicionais e, em seguida, estimamos essas mesmas três funções quantílicas, plotando suas curvas estimadas como linhas tracejadas.
+
+
+```{r fig5, message=FALSE, warning=FALSE, results='hide'}
+plot(x, y, col="blue", cex = .25)
+us <- c(.25, .5, .75)
+for(i in 1:length(us)){
+  u <- us[i]
+  v <- -log(1-(1-exp(-delta))/
+    (1 + exp(-delta*pt(x, df))*((1/u)-1))) / delta
+  lines(x, qt(v, df))
+}
+Dat <- NULL
+Dat$x <- x
+Dat$y <- y
+deltas <- matrix(0, 3, length(us))
+FrankModel <- function(x, delta, mu, sigma, df, tau){
+  z <- qt(-log(1-(1-exp(-delta))/
+    (1 + exp(-delta*pt(x, df))*((1/tau)-1))) / delta, df)
+  mu + sigma*z
+}
+for(i in 1:length(us)){
+  tau <- us[i]
+  fit <- nlrq(y ~ FrankModel(x, delta, mu, sigma, df=8, tau=tau),
+              data=Dat, tau=tau, start=list(delta=5, mu=0, sigma=1), trace=TRUE)
+  lines(x, predict(fit, newdata=x), lty=2, col="green")
+  deltas[i,] <- coef(fit)
+}
+```
+
+Estimativa Não Linear de Quantis Condicionais do Modelo de Cópula de Frank: As curvas sólidas representam as funções de quantil condicional verdadeiras, e as curvas correspondentes estimadas são indicadas pelas curvas tracejadas.
+
+#### Regressão quantílica não paramétrica
+
+A regressão quantílica não paramétrica é inicialmente mais facilmente considerada dentro de um quadro polinomial local. O ajuste linear local é realizado pela seguinte função:
+
+```{r rqnp, message=FALSE, warning=FALSE}
+"lprq" <- 
+function(x, y, h, m=50 , tau=.5)
+{
+  xx <- seq(min(x), max(x), length=m)
+  fv <- xx
+  dv <- xx
+  for(i in 1:length(xx)) {
+    z <- x - xx[i]
+    wx <- dnorm(z/h)
+    r <- rq(y ~ z, weights=wx, tau=tau, ci=FALSE)
+    fv[i] <- r$coef[1.]
+    dv[i] <- r$coef[2.]
+  }
+  list(xx = xx, fv = fv, dv = dv)
+}
+```
+
+Se você analisar a função com atenção, verá que se trata simplesmente de calcular um ajuste de regressão quantílica em cada um dos m valores de x igualmente espaçados, distribuídos sobre o suporte dos pontos observados de x. Os valores estimados da função são retornados como fv e as estimativas da primeira derivada nos m pontos são retornadas como dv. Como de costume, você pode especificar τ, mas agora também precisa especificar uma largura de banda h.
+
+
+### Exemplo 5: Acidente de Motocicleta Simulado
+
+Um data frame que fornece uma série de medições da aceleração da cabeça em um acidente de motocicleta simulado, usado para testar capacetes de proteção.
+
+```{r fig6, message=FALSE, warning=FALSE}
+data(mcycle)
+
+attach(mcycle)
+
+plot(times, accel, xlab = "milliseconds", ylab = "acceleration")
+hs <- c(1, 2, 3, 4)
+for(i in hs){
+  h <- hs[i]
+  fit <- lprq(times, accel, h = h, tau = .5)
+  lines(fit$xx, fit$fv, lty = i)
+}
+legend(45, -70, c("h=1", "h=2", "h=3", "h=4"), lty = 1:length(hs))
+```
+
+A figura acima mostra a estimativa de um modelo de regressão mediana linear local para os dados de motocicleta: quatro larguras de banda distintas.
+
+Outra estratégia simples, mas bastante geral, para regressão quantílica não paramétrica utiliza splines de regressão. A função bs() do pacote splines fornece uma maneira muito flexível de construir expansões de base B-spline. Por exemplo, você pode ajustar um novo modelo de motocicleta assim:
+
+```{r}
+plot(times, accel, xlab = "milliseconds", ylab = "acceleration", type = "n")
+points(times, accel, cex = .75)
+X <- model.matrix(accel ~ bs(times, df = 15))
+for(tau in 1:3/4){
+  fit <- rq(accel ~ bs(times, df = 15), tau = tau, data = mcycle)
+  accel.fit <- X %*% fit$coef
+  lines(times, accel.fit)
+}
+```
+
+
+A figura acima exibe estimativas B-spline das três funções quartis condicionais dos dados de motocicleta. As funções de quantil condicional ajustadas apresentam um desempenho razoável, exceto na região além de 50 milissegundos, onde os dados são tão escassos que todas as curvas de quantil tendem a se fundir.
+
+
+Se houvesse outra covariável, digamos z, ela poderia ser adicionada como um componente paramétrico usando a sintaxe usual de fórmulas.
+
+```{r varz, message=FALSE, warning=FALSE}
+#fit <- rq(y~bs(x,df=5)+z,tau=.33)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
