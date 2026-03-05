@@ -1,0 +1,356 @@
+---
+title: "controle_sintético - proposição 99"
+author: ' '
+date: "04-03-2026"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_title: Sumário
+    number_sections: true
+---
+
+
+### Introdução
+  
+Este documento apresenta a replicação do artigo **"Synthetic Control Methods for Comparative Case Studies: Estimating the Effect of California’s Tobacco Control Program"**. O estudo de Abadie, Diamond e Hainmueller analisa os efeitos da Proposição 99, um amplo programa de controle do tabaco implementado na Califórnia em 1988, utilizando o método de controle sintético. Os autores demonstram que, após a adoção da medida, o consumo de cigarros no estado caiu de forma significativa em relação a uma região sintética de comparação. As estimativas indicam que, no ano de 2000, as vendas anuais per capita de cigarros na Califórnia foram aproximadamente 26 maços menores do que seriam na ausência da Proposição 99.
+
+
+### Bibliotecas
+
+```{r bibliotecas, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(Synth)
+library(tidyr)
+```
+
+### Importando e manipulando os dados
+
+Abaixo, importam-se os dados.
+
+```{r define-diretorio, echo=FALSE, message=FALSE, warning=FALSE}
+setwd('C:/Users/Usuaro/OneDrive/Área de Trabalho/modelos/controle_sintetico')
+```
+
+Visualizar as primeiras observações
+
+```{r importar-dados, message=FALSE, warning=FALSE}
+# Importando os dados
+df <- read.csv("df_prop99.csv")
+
+head(df, 5)
+```
+
+### Evolução das vendas de cigarros (per capta) nas califórnia real e sintética
+
+Para a plotar a  figura 1 do artigo temos que calcular as médias de vendas de cigarro per capital dos Estados Unidos (excluindo a Califórnia) e comparar com a própria Califórnia.
+
+```{r media-vendas-cigarros, message=FALSE, warning=FALSE}
+# Calcular média das vendas per capita dos EUA (excluindo Califórnia)
+df_media <- df %>%
+  group_by(year) %>%
+  summarise(
+    california = mean(cigsale[state == 3]),   # Califórnia = state==3 no dataset
+    rest_us = mean(cigsale[state != 3])       # média dos demais estados
+  )
+```
+
+Como é argumentado no artigo, a figura mostra que utilizar o resto dos Estados Unidos como contrafactual não parece ser o mais adequado. Na figura abaixo, a linha vertical tracejada preta indica o ano de 1988, ano em que a proposição 99 foi aprovada.
+
+```{r figura-1, message=FALSE, warning=FALSE}
+# Plotar figura
+ggplot(df_media, aes(x = year)) +
+  geom_line(aes(y = california, color = "California"), size = 1.0) +
+  geom_line(aes(y = rest_us, color = "Resto dos EUA"), size = 1.0, linetype = "dashed") +
+  geom_vline(xintercept = 1988, size=1.0, linetype = "dotted") + # ano da intervenção
+  labs(
+    title = "Tendencia na venda de Cigarros per capita",
+    subtitle = "California vs. Resto dos Estados Unidos",
+    x = "Ano", y = "Cigarros per capita",
+    color = ""
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom")
+```
+
+### Médias dos preditores (variáveis independentes) das vendas de cigarros per capita
+
+Como dito pelos autores "Para avaliar o efeito da Proposição 99 sobre o consumo de cigarros na Califórnia, a questão central é como o consumo de cigarros teria evoluído na Califórnia após 1988 na ausência da Proposição 99. O método de controle sintético fornece uma forma sistemática de estimar esse contrafactual."
+
+Os autores continuam explicando que "é construido a Califórnia sintética como a combinação convexa dos estados do conjunto doador que mais se assemelhavam à Califórnia em termos dos valores pré-Proposição 99 dos preditores da prevalência do tabagismo."
+
+Abaixo preparamos os dados para que possamos criar a unidade de tratamento sintética.
+
+```{r data-prep, message=FALSE, warning=FALSE}
+dataprep_out <- dataprep(
+  foo = df,
+  predictors = c("lnincome", "age15to24", "retprice"),
+  special.predictors = list(
+    list("beer", 1984:1988, c("mean")),           # beer média 1984-1988
+    list("cigsale", 1975, c("mean")),
+    list("cigsale", 1980, c("mean")),
+    list("cigsale", 1988, c("mean"))
+  ),
+  dependent = "cigsale",
+  unit.variable = "state",
+  time.variable = "year",
+  treatment.identifier = "California",
+  controls.identifier = unique(df$state_name[-which(df$state_name == "California")]),
+  time.predictors.prior = 1980:1988,             # médias das preditoras de 1980-1988
+  time.optimize.ssr = 1970:1988,
+  time.plot = 1970:2000,
+  unit.names.variable = "state_name"
+)
+
+```
+
+Após isso, cria-se a califórnia sintética
+
+```{r california-sintetica, message=FALSE, warning=FALSE}
+synth_out <- synth(
+  data.prep.obj = dataprep_out
+)
+```
+
+Para replicar a tabela 1 do artigo basta rodar o seguinto código
+
+```{r tabela1, message=FALSE, warning=FALSE}
+# Criando tabelas de resumo
+synth.tables <- synth.tab(dataprep.res = dataprep_out, synth.res = synth_out)
+
+# Replicando a tabela 1 do artigo
+synth.tables$tab.pred[1:7,]
+```
+
+
+### Pesos por estado na criação da califórnia sintética
+
+A Tabela 2 apresenta os pesos atribuídos a cada estado de controle na construção da Califórnia sintética. Os valores indicam que as tendências de consumo de cigarros na Califórnia antes da aprovação da Proposição 99 são melhor replicadas por uma combinação dos estados Colorado, Connecticut, Montana, Nevada e Utah. Todos os outros estados do grupo de doadores recebem peso zero.
+
+```{r tabela2, message=FALSE, warning=FALSE}
+synth.tables$tab.w[1:38, ]
+```
+
+### Evolução nas vendas per capita de cigarros: Califórnia vs. Califórnia sintética.
+
+A Figura 2 mostra as vendas de cigarros per capita da Califórnia e de sua contraparte sintética no período de 1970 a 2000. Isso sugere que a Califórnia sintética fornece uma aproximação razoável do número de maços de cigarros per capita que teriam sido vendidos na Califórnia entre 1989 e 2000 na ausência da Proposição 99.
+
+```{r figura2, message=FALSE, warning=FALSE}
+path.plot(
+  synth.res = synth_out,
+  dataprep.res = dataprep_out,
+  Ylab = "Cigarros per capita",            
+  Xlab = "Ano",                            
+  Legend = c("California Real", "California Sintetica"),  
+  Legend.position = "topright"
+)
+
+title("Vendas de Cigarros per Capita: California vs Sintetica")
+
+# Linha vertical tracejada no ano da intervenção
+abline(v = 1988, lty = 2, col = "black", lwd = 1.2)
+```
+
+### Gap nas vendas per capita de cigarros entre a Califórnia e a Califórnia sintética.
+
+A estimativa do efeito da Proposição 99 sobre o consumo de cigarros na Califórnia é a diferença entre as vendas de cigarros per capita na Califórnia e na sua versão sintética após a aprovação da Proposição 99. A discrepância entre as duas linhas sugere um grande efeito negativo da Proposição 99 sobre as vendas de cigarros per capita.
+
+```{r figura3, message=FALSE, warning=FALSE}
+gaps.plot(
+  synth.res = synth_out, 
+  dataprep.res = dataprep_out,
+  Ylab = "Diferença na venda per capita de cigarros (em maços)", 
+  Xlab = "Ano",
+  Main = NA
+)
+```
+
+A Figura 3 mostra as estimativas anuais dos impactos da Proposição 99, ou seja, os impactos anuais no consumo de cigarros per capita entre a Califórnia e sua contraparte sintética. A Figura 3 sugere que a Proposição 99 teve um grande efeito sobre as vendas de cigarros per capita, e que esse efeito aumentou ao longo do tempo.
+
+
+A tabela abaixo, mostra uma estimativa do impacto ano a ano. É estimado uma diminuição de 25,43 maços de cigarro per capita no ano de 2000 dada a proposição aprovada em 1988.
+
+```{r Efeito, message=FALSE, warning=FALSE}
+# Califórnia real
+Y1 <- dataprep_out$Y1plot  
+
+# Califórnia sintética
+Y0 <- dataprep_out$Y0plot %*% synth_out$solution.w  
+
+# Diferença ano a ano (gaps)
+gaps <- Y1 - Y0
+
+# Arredondar para duas casas decimais
+gaps <- round(gaps, 2)
+
+# Criar data.frame com anos e gaps
+gaps_df <- data.frame(
+  Ano = dataprep_out$tag$time.plot,
+  Gap = gaps
+)
+
+gaps_df
+
+```
+
+### Gap nas vendas de cigarros per capita na Califórnia e gaps placebos nos 38 estados de controle.
+
+A Figura 4 apresenta os resultados do teste de placebo. As linhas cinzas indicam o desvio observado em cada uma das 38 execuções do teste, ou seja, a diferença nas vendas per capita de cigarros entre cada estado do grupo de doadores e sua versão sintética correspondente. A linha vermelha, sobreposta às demais, mostra o desvio estimado para a Califórnia. Como pode ser visto, o desvio da Califórnia no período de 1989 a 2000 é consideravelmente maior em comparação à distribuição dos desvios observados para os demais estados do grupo de doadores.
+
+
+```{r figura4, message=FALSE, warning=FALSE, results='hide'}
+# Lista de todos os estados
+estados <- unique(df$state_name)
+
+# Vetor para armazenar resultados
+placebo_results <- list()
+
+for (estado in estados) {
+  # Pular a Califórnia
+  if (estado == "California") next
+  
+  # Preparar os dados para o estado placebo
+  dataprep_placebo <- dataprep(
+    foo = df,
+    predictors = c("lnincome", "age15to24", "retprice"),
+    special.predictors = list(
+      list("beer", 1984:1988, c("mean")),
+      list("cigsale", 1975, c("mean")),
+      list("cigsale", 1980, c("mean")),
+      list("cigsale", 1988, c("mean"))
+    ),
+    dependent = "cigsale",
+    unit.variable = "state",
+    time.variable = "year",
+    treatment.identifier = estado,
+    controls.identifier = unique(df$state_name[df$state_name != estado]),
+    time.predictors.prior = 1980:1988,
+    time.optimize.ssr = 1970:1988,
+    time.plot = 1970:2000,
+    unit.names.variable = "state_name"
+  )
+  
+  # Rodar o synth
+  synth_placebo <- synth(dataprep_placebo)
+  
+  # Calcular gaps
+  Y1 <- dataprep_placebo$Y1plot
+  Y0 <- dataprep_placebo$Y0plot %*% synth_placebo$solution.w
+  gaps <- Y1 - Y0
+  
+  # Salvar
+  placebo_results[[estado]] <- gaps
+}
+
+```
+
+```{r plot4, message=FALSE, warning=FALSE, results='hide'}
+# Gaps da Califórnia
+Y1_ca <- dataprep_out$Y1plot
+Y0_ca <- dataprep_out$Y0plot %*% synth_out$solution.w
+gaps_ca <- Y1_ca - Y0_ca
+
+# Plot
+plot(dataprep_out$tag$time.plot, gaps_ca, type = "l", lwd = 2, col = "red",
+     ylab = "Diferença per capita de cigarros", xlab = "Ano")
+abline(v = 1988, lty = 2)
+
+# Adicionar placebos
+for (estado in names(placebo_results)) {
+  lines(dataprep_out$tag$time.plot, placebo_results[[estado]], col = "gray", lty = 2)
+}
+
+legend("topright", legend = c("California", "Placebos"), col = c("red", "gray"), lwd = 2)
+```
+
+
+### Razão entre o MSPE pós-Proposição 99 e o MSPE pré-Proposição 99: Califórnia e 38 estados de controle.
+
+```{r ratios, message=FALSE, warning=FALSE}
+# Função auxiliar para calcular o MSPE ratio de um estado
+calc_mspe_ratio <- function(dataprep_res, synth_res, treat.year = 1989) {
+  # Valores observados e sintéticos
+  Y1 <- dataprep_res$Y1plot
+  Y0 <- dataprep_res$Y0plot %*% synth_res$solution.w
+  time <- dataprep_res$tag$time.plot
+  
+  # Gaps
+  gaps <- Y1 - Y0
+  
+  # Erro quadrático médio pré e pós
+  pre_idx <- which(time < treat.year)
+  post_idx <- which(time >= treat.year)
+  
+  mspe_pre <- mean(gaps[pre_idx]^2)
+  mspe_post <- mean(gaps[post_idx]^2)
+  
+  ratio <- mspe_post / mspe_pre
+  return(ratio)
+}
+
+```
+
+
+```{r lita-ratios, message=FALSE, warning=FALSE, results='hide'}
+ratios <- list()
+
+# Califórnia
+ratios[["California"]] <- calc_mspe_ratio(dataprep_out, synth_out, treat.year = 1989)
+
+# Placebos
+for (estado in estados) {
+  if (estado == "California") next
+  
+  dataprep_placebo <- dataprep(
+    foo = df,
+    predictors = c("lnincome", "age15to24", "retprice"),
+    special.predictors = list(
+      list("beer", 1984:1988, c("mean")),
+      list("cigsale", 1975, c("mean")),
+      list("cigsale", 1980, c("mean")),
+      list("cigsale", 1988, c("mean"))
+    ),
+    dependent = "cigsale",
+    unit.variable = "state",
+    time.variable = "year",
+    treatment.identifier = estado,
+    controls.identifier = setdiff(unique(df$state_name), estado),
+    time.predictors.prior = 1980:1988,
+    time.optimize.ssr = 1970:1988,
+    time.plot = 1970:2000,
+    unit.names.variable = "state_name"
+  )
+  
+  synth_placebo <- synth(dataprep_placebo)
+  ratios[[estado]] <- calc_mspe_ratio(dataprep_placebo, synth_placebo, treat.year = 1989)
+}
+
+```
+
+
+```{r plote-ratios, message=FALSE, warning=FALSE, results='hide'}
+ratios_vec <- unlist(ratios)
+
+barplot(ratios_vec,
+        names.arg = names(ratios_vec),
+        las = 2, cex.names = 0.7,
+        col = ifelse(names(ratios_vec) == "California", "red", "gray"),
+        ylab = "MSPE pós / MSPE pré",
+        main = "MSPE Ratios: California vs Placebos")
+
+```
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,295 @@
+---
+title: "Controle sintético - País basco"
+author: ' '
+date: "02-10-2025"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_title: Sumário
+    number_sections: true
+---
+
+### Introdução
+  
+Este documento apresenta alguns dos principais resultados encontrados no artigo "The Economic Costs of Conflict: A Case Study of the Basque Country", de Alberto Abadie e Javier Gardeazabal. O estudo analisa o impacto do conflito separatista no País Basco sobre o desempenho econômico da região, utilizando o método de controle sintético. Os autores constataram que, durante o período de maior intensidade do conflito, o PIB per capita do País Basco ficou consistentemente abaixo do nível que teria sido observado na ausência do conflito, conforme estimado por uma região sintética de comparação composta por outras regiões espanholas. As estimativas indicam que, em média, o conflito reduziu o crescimento econômico da região, evidenciando os custos econômicos diretos do conflito. Os códigos utilizados para a replicação são os mesmos apresentados em Synth: An R Package for Synthetic Control Methods, de Abadie, Diamond e Hainmueller, que permitem construir a contrafactual sintético e gerar os resultados apresentados no estudo.
+
+### Biblitecas e importação dos dados
+
+Importando as bibliotecas necessárias
+
+```{r bibliotecas, message=FALSE, warning=FALSE}
+library(Synth)
+```
+
+Importando os dados. Tal conjunto de informação já está na pacote `Synth`.
+
+```{r impota-dads, message=FALSE, warning=FALSE}
+# Carrega os dados
+data(basque)
+
+# Visualiza as 5 primeiras observações
+head(basque, 5)
+```
+### Principais resultados
+
+O primeiro passo consiste em reorganizar o conjunto de dados em painel, de modo que ele fique no formato adequado para ser utilizado pela função principal de estimação, `synth()`.
+
+```{r dataprep, message=FALSE, warning=FALSE}
+dataprep.out <- dataprep(
+  foo = basque,
+  
+  # Preditores gerais
+  predictors = c("school.illit", "school.prim", "school.med",
+                 "school.high", "school.post.high", "invest"),
+  predictors.op = "mean",
+  time.predictors.prior = 1964:1969,
+  
+  # Preditores especiais
+  special.predictors = list(
+    list("gdpcap", 1960:1969, "mean"),
+    list("sec.agriculture", seq(1961, 1969, 2), "mean"),
+    list("sec.energy", seq(1961, 1969, 2), "mean"),
+    list("sec.industry", seq(1961, 1969, 2), "mean"),
+    list("sec.construction", seq(1961, 1969, 2), "mean"),
+    list("sec.services.venta", seq(1961, 1969, 2), "mean"),
+    list("sec.services.nonventa", seq(1961, 1969, 2), "mean"),
+    list("popdens", 1969, "mean")
+  ),
+  
+  # Variável dependente
+  dependent = "gdpcap",
+  
+  # Identificação das unidades
+  unit.variable = "regionno",
+  unit.names.variable = "regionname",
+  time.variable = "year",
+  
+  # Tratamento e controle
+  treatment.identifier = 17,
+  controls.identifier = c(2:16, 18),
+  
+  # Períodos de otimização e plotagem
+  time.optimize.ssr = 1960:1969,
+  time.plot = 1955:1997
+)
+```
+
+A função synth() determina o vetor **W** de pesos que constrói o controle sintético para o País Basco, por meio da resolução de um problema de otimização em duas etapa
+
+```{r synth, message=FALSE, warning=FALSE}
+synth.out <- synth(data.prep.obj = dataprep.out, 
+                   method = "BFGS")
+```
+Após os códigos anteiores, já podemos verificar alguns dos resultados. A figura abaixo mostra o país Basco e a sua versão sintética caso as atividades terroristas não tivessem ocorridas. Período de 1955-1977. 1970 é o ano definido como o ponto de tempo do impacto.
+
+```{r plote1, message=FALSE, warning=FALSE}
+path.plot(
+  synth.res = synth.out,
+  dataprep.res = dataprep.out,
+  Ylab = "Real per-capita GDP (1986 USD, thousand)",
+  Xlab = "Year",
+  Ylim = c(0, 12),
+  Legend = c("Basque country", "Synthetic Basque country"),
+  Legend.position = "bottomright"
+)
+```
+
+De modo geral, a plotagem indica uma perda de 10% no PIB per capita atribuída ao terrorismo durante as décadas de 1980 e 1990.
+
+As discrepâncias anuais na tendência do PIB entre a região Basca e seu equivalente sintético podem ser calculadas abaixo:
+
+```{r calcula-gap, message=FALSE, warning=FALSE}
+# Calculando as discrepâncias
+gaps <- dataprep.out$Y1plot - (dataprep.out$Y0plot %*% synth.out$solution.w)
+
+# Diferenças inciais
+gaps[1:3, 1]
+```
+Os valores calculados para os gaps representam a diferença anual entre o PIB per capita real do País Basco e o PIB per capita do controle sintético. Nos anos pré-conflito, como 1955, 1956 e 1957, o País Basco apresentava um PIB per capita ligeiramente superior ao do seu contrafactual sintético, indicando que, antes da intensificação do conflito, a economia da região estava acima do nível esperado caso o conflito não tivesse ocorrido. Ao longo do tempo, essas diferenças permitem avaliar o impacto econômico do conflito sobre o crescimento regional.
+
+
+```{r gap-last, message=FALSE, warning=FALSE}
+# Diferenças finais
+tail(gaps, 3)
+```
+Nos anos finais do período analisado, os gaps entre o PIB per capita real do País Basco e seu controle sintético apresentam valores negativos, indicando que a economia da região estava abaixo do nível que teria sido esperado na ausência do conflito. Especificamente, em 1995, 1996 e 1997, o PIB per capita do País Basco ficou aproximadamente 0,86, 0,85 e 0,83 mil dólares abaixo do contrafactual, respectivamente. Esses resultados evidenciam os impactos econômicos persistentes do terrorismo sobre o crescimento regional.
+
+Para verificar buscar algumas tabelas de resumo rodamos o código abaixo.
+
+```{r criar-tabelas, message=FALSE, warning=FALSE}
+synth.tables <- synth.tab(
+    dataprep.res = dataprep.out,
+    synth.res = synth.out
+)
+```
+
+Abaixo, para as variáveis escolhidas vericamos um resumo estatístico para a unidade tratada, a unidade sintética e as demais regiões da espanha.
+
+```{r medias, message=FALSE, warning=FALSE}
+# Selecionar apenas as linhas desejadas
+vars <- c("school.illit", "school.prim", "school.med", "school.high", "invest")
+synth.tables$tab.pred[vars, ]
+```
+A tabela a seguir mostra quais regiões mais contribuem para a construção do País Basco sintético. Observa-se que a Catalunha contribui com 85% e Madrid com 15%, enquanto todos os demais estados de controle recebem peso zero.
+
+```{r pesos, message=FALSE, warning=FALSE}
+synth.tables$tab.w[1:16, ]
+```
+A função gaps.plot() mostra a evolução das diferenças entre o PIB do País Basco e seu controle sintético ao longo do tempo. Antes do terrorismo, as trajetórias são semelhantes, mas a partir da metade dos anos 1970 o crescimento do PIB basco desacelera, evidenciando os efeitos econômicos negativos do conflito.
+
+```{r plote-discrepancia, message=FALSE, warning=FALSE}
+gaps.plot(
+  synth.res = synth.out,
+  dataprep.res = dataprep.out,
+  Ylab = "Gap in real per-capita GDP (1986 USD, thousand)",
+  Xlab = "Year",
+  Ylim = c(-1.5, 1.5),
+  Main = NA
+)
+```
+
+### Teste de Placebo
+
+Os testes de placebo no método de controle sintético consistem em aplicar o mesmo procedimento de criação de um controle sintético a regiões que não sofreram o tratamento, ou seja, tratá-las como se tivessem sido afetadas pelo evento em estudo. O objetivo desses testes é avaliar a significância e a robustez do efeito observado na unidade tratada, comparando o gap entre a unidade tratada e seu controle sintético com os gaps obtidos para as regiões placebo. Se o gap da unidade tratada for significativamente maior do que os gaps das regiões placebo, isso indica que o efeito do tratamento é real e não apenas resultado de flutuações naturais. Por outro lado, se os gaps forem semelhantes, o efeito pode não ser confiável. Para aumentar a confiabilidade da análise, regiões com erro médio pré-tratamento (MSPE) muito elevado em relação à unidade tratada geralmente são excluídas da comparação, garantindo que a interpretação do efeito pós-tratamento seja consistente e relevante.
+
+O código utilizado para a execução do teste de placebo e construção do controle sintético foi adaptado de Méndez (2023) e pode ser obtido em: (https://carlos-mendez.quarto.pub/r-synthetic-control-tutorial/).
+
+```{r placebo, message=FALSE, warning=FALSE, results='hide'}
+# Matriz para armazenar os gaps (linhas = anos, colunas = regiões placebo)
+store <- matrix(NA, nrow = length(1955:1997), ncol = 17)
+colnames(store) <- unique(basque$regionname)[-1]  # exclui "Spain (resto)"
+
+# Loop sobre as unidades tratadas fictícias (2 a 18)
+for (iter in 2:18) {
+  
+  # Preparação dos dados
+  dataprep.out <- dataprep(
+    foo = basque,
+    predictors = c("school.illit", "school.prim", "school.med",
+                   "school.high", "school.post.high", "invest"),
+    predictors.op = "mean",
+    time.predictors.prior = 1964:1969,
+    special.predictors = list(
+      list("gdpcap", 1960:1969, "mean"),
+      list("sec.agriculture", seq(1961, 1969, 2), "mean"),
+      list("sec.energy", seq(1961, 1969, 2), "mean"),
+      list("sec.industry", seq(1961, 1969, 2), "mean"),
+      list("sec.construction", seq(1961, 1969, 2), "mean"),
+      list("sec.services.venta", seq(1961, 1969, 2), "mean"),
+      list("sec.services.nonventa", seq(1961, 1969, 2), "mean"),
+      list("popdens", 1969, "mean")
+    ),
+    dependent = "gdpcap",
+    unit.variable = "regionno",
+    unit.names.variable = "regionname",
+    time.variable = "year",
+    treatment.identifier = iter,
+    controls.identifier = setdiff(2:18, iter),
+    time.optimize.ssr = 1960:1969,
+    time.plot = 1955:1997
+  )
+  
+  # Ajustes de variáveis educacionais (combina escolaridade)
+  dataprep.out$X1["school.high",] <- dataprep.out$X1["school.high",] + dataprep.out$X1["school.post.high",]
+  dataprep.out$X1 <- as.matrix(dataprep.out$X1[-which(rownames(dataprep.out$X1)=="school.post.high"),])
+  
+  dataprep.out$X0["school.high",] <- dataprep.out$X0["school.high",] + dataprep.out$X0["school.post.high",]
+  dataprep.out$X0 <- dataprep.out$X0[-which(rownames(dataprep.out$X0)=="school.post.high"),]
+  
+  # Normalização: distribuições de escolaridade em %
+  lowest  <- which(rownames(dataprep.out$X0)=="school.illit")
+  highest <- which(rownames(dataprep.out$X0)=="school.high")
+  
+  dataprep.out$X1[lowest:highest,] <- 100 * dataprep.out$X1[lowest:highest,] / 
+                                      sum(dataprep.out$X1[lowest:highest,])
+  dataprep.out$X0[lowest:highest,] <- 100 * scale(
+    dataprep.out$X0[lowest:highest,],
+    center = FALSE,
+    scale  = colSums(dataprep.out$X0[lowest:highest,])
+  )
+  
+  # Estima o sintético
+  synth.out <- synth(data.prep.obj = dataprep.out, method = "BFGS")
+  
+  # Calcula e armazena os gaps
+  store[, iter-1] <- dataprep.out$Y1plot - (dataprep.out$Y0plot %*% synth.out$solution.w)
+}
+
+# Data frame com resultados
+years <- 1955:1997
+gaps_df <- data.frame(year = years, store)
+
+```
+
+```{r}
+# Organizar dados
+data <- store
+rownames(data) <- 1955:1997
+years <- 1955:1997
+
+# Definir limites
+gap.start <- 1
+gap.end   <- nrow(data)
+gap.end.pre <- which(rownames(data)=="1969")
+
+# MSPE Pré-tratamento
+mse <- apply(data[gap.start:gap.end.pre,]^2, 2, mean)
+basque.mse <- as.numeric(mse[16])
+
+# Excluir regiões com MSPE muito alto
+data <- data[, mse < 5 * basque.mse]
+
+# Plotar placebos em cinza
+plot(years, data[,1], ylim=c(-2,2), xlab="Ano", ylab="Gap no PIB per capita real",
+     type="n", xlim=c(1955,1997), xaxs="i", yaxs="i")
+
+for (i in 1:ncol(data)) {
+  lines(years, data[,i], col="gray")
+}
+
+# Destacar País Basco
+lines(years, data[,"Basque Country (Pais Vasco)"], lwd=2, col="black")
+
+# Adicionar elementos gráficos
+abline(v=1970, lty="dotted", lwd=2)  # intervenção
+abline(h=0, lty="dashed", lwd=2)
+
+# Legenda
+legend("bottomright", legend=c("País Basco","Regiões controle"),
+       lty=c(1,1), col=c("black","gray"), lwd=c(2,1), cex=0.8)
+
+# Anotação para o terrorismo
+arrows(1967, -1.5, 1968.5, -1.5, col="black", length=.1)
+text(1961.5, -1.5, "Início do terrorismo", cex=0.8)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
